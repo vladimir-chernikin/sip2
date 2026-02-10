@@ -75,7 +75,6 @@ class AriClient:
         payload = {
             "app": self.app_name,
             "external_host": external_host,
-            "format": "slin16",
             "direction": "both",
             "transport": "udp",
             "encapsulation": "rtp",
