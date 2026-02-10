@@ -1,0 +1,4 @@
+numpy==1.24.3
+scipy==1.11.4
+websockets==12.0
+

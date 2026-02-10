@@ -1,0 +1,95 @@
+services:
+  asterisk:
+    build:
+      context: ./asterisk
+      dockerfile: Dockerfile
+    container_name: asterisk
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "5060:5060/udp"
+      - "7077:7077/tcp"
+      - "7077:7077/udp"
+      - "8088:8088/tcp"
+      - "10000-10100:10000-10100/udp"
+    volumes:
+      - ./asterisk/etc/asterisk/sip.conf:/etc/asterisk/sip.conf:ro
+      - ./asterisk/etc/asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/etc/asterisk/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./asterisk/etc/asterisk/http.conf:/etc/asterisk/http.conf:ro
+      - ./asterisk/etc/asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./asterisk/etc/asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+    networks:
+      - ai_voice_net
+
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      asterisk:
+        condition: service_started
+    environment:
+      ARI_BASE_URL: http://asterisk:8088/ari
+      ARI_USER: admin
+      ARI_PASSWORD: admin123
+      ARI_APP: ai_app
+      AUDIOSOCKET_HOST: audiosocket
+      AUDIOSOCKET_PORT: "7575"
+    ports:
+      - "9000:9000"
+    networks:
+      - ai_voice_net
+
+  audiosocket:
+    build: ./media_sockets
+    container_name: audiosocket
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - asterisk
+    env_file:
+      - .env
+    networks:
+      - ai_voice_net
+
+networks:
+  ai_voice_net:
+    driver: bridge
