@@ -3,10 +3,4 @@ rtpstart=10000
 rtpend=10100
 ; отключаем строгую проверку RTP, чтобы Docker/Windows NAT не мешал
 strictrtp=no
-; Оптимизация для GSM сетей (Билайн)
-icesupport=yes
-rtcpinterval=5
-rtcpmux=no
-rfc5765_correlation=yes
-dtlsenable=no
 

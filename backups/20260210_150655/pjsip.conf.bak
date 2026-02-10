@@ -1,0 +1,54 @@
+; pjsip.conf – минимальная конфигурация для аккаунта 1001 (Zoiper)
+
+[global]
+type=global
+; порядок определения endpoint'ов
+endpoint_identifier_order=username,ip,anonymous
+
+; ===== ТРАНСПОРТ UDP =====
+[transport-udp]
+type=transport
+protocol=udp
+; Asterisk в контейнере слушает на стандартном SIP порту 5060
+bind=0.0.0.0:5060
+; Настройки для работы с белым IP и NAT
+external_media_address=109.172.46.197
+external_signaling_address=109.172.46.197
+local_net=172.16.0.0/12
+local_net=10.0.0.0/8
+local_net=192.168.0.0/16
+
+; ===== AOR 1001 (адрес регистрации) =====
+[1001]
+type=aor
+max_contacts=1
+remove_existing=yes
+remove_unavailable=yes
+default_expiration=60
+qualify_frequency=30
+qualify_timeout=3.0
+
+; ===== AUTH 1001 =====
+[1001]
+type=auth
+auth_type=userpass
+username=1001
+password=1001pass
+
+; ===== ENDPOINT 1001 =====
+[1001]
+type=endpoint
+context=from-internal
+disallow=all
+allow=alaw
+allow=ulaw
+allow=slin16
+transport=transport-udp
+auth=1001
+aors=1001
+direct_media=no
+dtmf_mode=rfc4733
+rewrite_contact=yes
+rtp_symmetric=yes
+force_rport=yes
+rtp_keepalive=5
