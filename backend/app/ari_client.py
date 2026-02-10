@@ -363,8 +363,7 @@ class AriWsHandler:
             self.channel_to_bridge[external_channel_id] = bridge_id
             self.session_channels[session_uuid] = (channel_id, external_channel_id)
 
-            # Сразу добавляем externalMedia в bridge БЕЗ answer()
-            # Bridge сам переведёт канал в Up когда начнётся RTP
+            # Сначала добавляем в bridge, ПОТОМ answer
             await self.ari_client.add_channel_to_bridge(
                 bridge_id, external_channel_id
             )
@@ -374,8 +373,11 @@ class AriWsHandler:
                 bridge_id,
             )
 
-            # Даём время на запуск RTP
-            await asyncio.sleep(0.3)
+            # Answer ПОСЛЕ добавления в bridge - это запускает RTP
+            await self.ari_client.answer_channel(external_channel_id)
+            logger.info(
+                "ExternalMedia канал %s активирован (ANSWER)", external_channel_id
+            )
 
             # Проверяем, что оба канала в bridge
             await asyncio.sleep(0.5)  # Даём время на добавление
