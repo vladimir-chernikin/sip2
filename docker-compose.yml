@@ -59,7 +59,7 @@ services:
       ARI_USER: admin
       ARI_PASSWORD: admin123
       ARI_APP: ai_app
-      AUDIOSOCKET_HOST: audiosocket
+      AUDIOSOCKET_HOST: 172.18.0.2
       AUDIOSOCKET_PORT: "7575"
     ports:
       - "9000:9000"
