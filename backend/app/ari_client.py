@@ -33,11 +33,11 @@ class AriClient:
 
     async def create_bridge(self) -> str:
         async with httpx.AsyncClient() as client:
-            # Создаём mixing bridge для транскодирования между форматами
+            # Создаём simple bridge (без микшинга, для точной передачи формата)
             response = await client.post(
                 f"{self.base_url}/bridges",
                 auth=self.auth,
-                json={"type": "mixing"},
+                json={"type": "simple"},
                 timeout=self.timeout,
             )
             response.raise_for_status()
