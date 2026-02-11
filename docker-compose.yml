@@ -63,6 +63,8 @@ services:
       AUDIOSOCKET_HOST: 172.18.0.30    # 🔧 Статический IP audiosocket
       AUDIOSOCKET_PORT: "7575"
       AUDIOSOCKET_API_PORT: "8888"  # 🔧 HTTP API порт audiosocket
+    volumes:
+      - ./backend/app:/app/app  # 🔧 Монтируем код для быстрой разработки
     ports:
       - "9000:9000"
     networks:
