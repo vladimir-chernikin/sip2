@@ -310,8 +310,15 @@ class AriClient:
                 )
                 return None
             response.raise_for_status()
-            # ARI возвращает значение в plain text
-            value = response.text.strip()
+
+            # 🔧 ARI возвращает JSON: {"value": "..."}
+            try:
+                data = response.json()
+                value = data.get("value", "").strip()
+            except Exception:
+                # Fallback: если не JSON, берём plain text
+                value = response.text.strip()
+
             logger.debug(
                 "Переменная %s канала %s = %s", variable, channel_id, value
             )
