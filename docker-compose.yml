@@ -61,6 +61,7 @@ services:
       ARI_APP: ai_app
       AUDIOSOCKET_HOST: 172.18.0.2
       AUDIOSOCKET_PORT: "7575"
+      AUDIOSOCKET_API_PORT: "8888"  # 🔧 HTTP API порт audiosocket
     ports:
       - "9000:9000"
     networks:
@@ -87,6 +88,8 @@ services:
       - asterisk
     env_file:
       - .env
+    expose:
+      - "8888"  # 🔧 HTTP API для регистрации session_uuid (внутри Docker сети)
     networks:
       - ai_voice_net
 

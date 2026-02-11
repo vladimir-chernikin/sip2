@@ -2,9 +2,8 @@ import asyncio
 import logging
 import struct
 import uuid
-from typing import Callable, Optional
+from typing import Callable
 
-from aiohttp import web
 from src.codecs import alaw_to_pcm16, pcm16_to_alaw
 from src.constants import (
     DEFAULT_SAMPLE_WIDTH,
@@ -206,33 +205,30 @@ class UdpSession:
         self,
         addr: tuple[str, int],
         transport: asyncio.DatagramTransport,
-        session_uuid: Optional[str] = None,
-        protocol: Optional["AudioSocketUdpProtocol"] = None,
     ):
         self.addr = addr
         self.transport = transport
-        self.session_uuid = session_uuid if session_uuid else str(uuid.uuid4())
+        self.session_uuid = str(uuid.uuid4())
         self.remote_addr = addr
-        self.protocol = protocol  # Ссылка на protocol для удаления мэппинга
-
+        
         # RTP параметры
         self.inbound_pt: int | None = None
         self.ssrc: int | None = None
         self.seq_out: int = 0
         self.ts_out: int = 0
-
+        
         logger.info(
             "Создана новая UDP-сессия для %s, uuid=%s",
             addr,
             self.session_uuid,
         )
-
+        
         # Очередь для записи PCM данных обратно в Asterisk
         write_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
+        
         # Создаём callback для отправки PCM
         send_pcm_callback = make_send_pcm_callback(write_queue)
-
+        
         # Создаём AudioHandler и AudioWebSocketClient
         self.audio_handler = AudioHandler(
             session_uuid=self.session_uuid,
@@ -242,23 +238,14 @@ class UdpSession:
             session_uuid=self.session_uuid,
             audio_handler=self.audio_handler,
         )
-
+        
         # Создаём jitter-buffer для входящего потока (Asterisk → OpenAI)
         # Если буфер отключен, callback будет напрямую вызывать client.push_pcm
         jitter_callback = self.client.push_pcm
         self.jitter_buffer = JitterBuffer(
             output_callback=jitter_callback,
         ) if ENABLE_JITTER_BUFFER else None
-
-        # 🔧 Отправляем инициализирующий RTP пакет для запуска потока
-        # 160 байт = 20ms silence для alaw (8kHz, 8bit)
-        silence_packet = bytes(160)  # Все нули = silence в G.711 A-law
-        transport.sendto(silence_packet, addr)
-        logger.info(
-            "[INIT] Отправлен инициализирующий RTP silence-пакет для %s (160 байт)",
-            addr,
-        )
-
+        
         # Запускаем задачи
         self.client_task = asyncio.create_task(self.client.run())
         self.write_task = asyncio.create_task(
@@ -311,14 +298,6 @@ class UdpSession:
             self.session_uuid,
             self.addr,
         )
-
-        # Удаляем мэппинг из protocol (если есть)
-        if self.protocol and self.addr in self.protocol.uuid_mapping:
-            del self.protocol.uuid_mapping[self.addr]
-            logger.debug(
-                "[CLEANUP] Удалён мэппинг для %s из uuid_mapping",
-                self.addr,
-            )
         
         # Останавливаем клиент
         self.client_task.cancel()
@@ -372,9 +351,7 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
         self.loop = loop
         self.transport = None
         self.sessions: dict[tuple[str, int], UdpSession] = {}
-        # 🔧 Мэппинг {(ip, port): session_uuid} для предсозданных сессий
-        self.uuid_mapping: dict[tuple[str, int], str] = {}
-
+    
     def connection_made(self, transport):
         self.transport = transport
         sockname = transport.get_extra_info("sockname")
@@ -382,23 +359,6 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
             "UDP AudioSocket сервер (RTP/G.711 A-law) запущен, локальный адрес: %s",
             sockname,
         )
-
-    def register_session_uuid(self, ip: str, port: int, session_uuid: str) -> bool:
-        """
-        Регистрирует session_uuid для будущего RTP соединения с Asterisk.
-
-        Вызывается через HTTP API после создания ExternalMedia.
-        Когда Asterisk отправит первый RTP с (ip, port), будет использован этот UUID.
-        """
-        addr = (ip, port)
-        self.uuid_mapping[addr] = session_uuid
-        logger.info(
-            "[REGISTER] Зарегистрирован session_uuid=%s для будущего соединения с %s:%d",
-            session_uuid,
-            ip,
-            port,
-        )
-        return True
     
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         try:
@@ -455,26 +415,13 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
             # Получаем или создаём сессию
             session = self.sessions.get(addr)
             if session is None:
-                # 🔧 Проверяем есть ли зарегистрированный UUID для этого адреса
-                session_uuid = self.uuid_mapping.get(addr)
-
-                if session_uuid:
-                    logger.info(
-                        "[SESSION] Создание новой UDP-сессии для %s с ПРЕДЗАДАННЫМ uuid=%s "
-                        "(всего активных сессий: %d)",
-                        addr,
-                        session_uuid,
-                        len(self.sessions),
-                    )
-                else:
-                    logger.info(
-                        "[SESSION] Создание новой UDP-сессии для адреса %s "
-                        "(всего активных сессий: %d)",
-                        addr,
-                        len(self.sessions),
-                    )
-
-                session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self)
+                logger.info(
+                    "[SESSION] Создание новой UDP-сессии для адреса %s "
+                    "(всего активных сессий: %d)",
+                    addr,
+                    len(self.sessions),
+                )
+                session = UdpSession(addr, self.transport)
                 self.sessions[addr] = session
             else:
                 logger.debug(
@@ -554,48 +501,7 @@ async def main() -> None:
         lambda: AudioSocketUdpProtocol(loop),
         local_addr=(HOST, PORT),
     )
-
-    # 🔧 Создаём HTTP API для регистрации session_uuid
-    app = web.Application()
-
-    async def register_uuid(request: web.Request) -> web.Response:
-        """HTTP API endpoint для регистрации session_uuid."""
-        try:
-            data = await request.json()
-            ip = data.get("ip")
-            port = data.get("port")
-            session_uuid = data.get("session_uuid")
-
-            if not all([ip, port, session_uuid]):
-                return web.json_response(
-                    {"error": "Missing required fields: ip, port, session_uuid"},
-                    status=400,
-                )
-
-            port = int(port)
-            protocol.register_session_uuid(ip, port, session_uuid)
-
-            return web.json_response(
-                {
-                    "status": "registered",
-                    "ip": ip,
-                    "port": port,
-                    "session_uuid": session_uuid,
-                }
-            )
-        except Exception as e:
-            logger.error("Ошибка в register_uuid: %s", e, exc_info=True)
-            return web.json_response({"error": str(e)}, status=500)
-
-    app.router.add_post("/register", register_uuid)
-
-    # Запускаем HTTP API на порту 8888
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8888)
-    await site.start()
-    logger.info("HTTP API сервер запущен на http://0.0.0.0:8888")
-
+    
     try:
         logger.info(
             "Запуск AudioSocket UDP сервера (RTP/G.711 A-law) на %s:%s",
@@ -611,7 +517,6 @@ async def main() -> None:
         for session in protocol.sessions.values():
             await session.cleanup()
         transport.close()
-        await runner.cleanup()
 
 
 if __name__ == "__main__":

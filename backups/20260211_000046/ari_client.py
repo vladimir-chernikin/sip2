@@ -288,35 +288,6 @@ class AriClient:
                 response.status_code,
             )
 
-    async def get_variable(self, channel_id: str, variable: str) -> str | None:
-        """
-        Получает значение переменной канала из ARI.
-
-        Используется для получения UNICASTRTP_LOCAL_PORT и UNICASTRTP_LOCAL_ADDRESS
-        после создания ExternalMedia канала.
-        """
-        url = f"{self.base_url}/channels/{channel_id}/variable"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url,
-                auth=self.auth,
-                timeout=self.timeout,
-                params={"variable": variable},
-            )
-            if response.status_code == 404:
-                # Переменная не существует
-                logger.debug(
-                    "Переменная %s не найдена для канала %s", variable, channel_id
-                )
-                return None
-            response.raise_for_status()
-            # ARI возвращает значение в plain text
-            value = response.text.strip()
-            logger.debug(
-                "Переменная %s канала %s = %s", variable, channel_id, value
-            )
-            return value
-
 
 class AriWsHandler:
     def __init__(
@@ -331,46 +302,6 @@ class AriWsHandler:
         self.running = False
         self.channel_to_bridge: dict[str, str] = {}
         self.session_channels: dict[str, tuple[str, str]] = {}
-        # 🔧 Получаем host/port audiosocket API из переменных окружения
-        self.audiosocket_api_host = os.getenv("AUDIOSOCKET_HOST", "audiosocket")
-        self.audiosocket_api_port = int(os.getenv("AUDIOSOCKET_API_PORT", "8888"))
-
-    async def register_session_uuid_audiosocket(
-        self, ip: str, port: int, session_uuid: str
-    ) -> bool:
-        """
-        Регистрирует session_uuid в AudioSocket через HTTP API.
-
-        AudioSocket запомнит этот UUID и будет использовать его когда Asterisk
-        начнёт отправлять RTP на (ip, port).
-        """
-        url = f"http://{self.audiosocket_api_host}:{self.audiosocket_api_port}/register"
-        payload = {"ip": ip, "port": port, "session_uuid": session_uuid}
-
-        logger.info(
-            "Регистрация session_uuid=%s в AudioSocket: ip=%s, port=%s, url=%s",
-            session_uuid,
-            ip,
-            port,
-            url,
-        )
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, timeout=5.0)
-                response.raise_for_status()
-                data = response.json()
-                logger.info(
-                    "Успешно зарегистрирован session_uuid в AudioSocket: %s", data
-                )
-                return True
-        except Exception as e:
-            logger.error(
-                "Ошибка регистрации session_uuid в AudioSocket: %s",
-                e,
-                exc_info=True,
-            )
-            return False
 
     async def handle_stasis_start(self, event: dict) -> None:
         try:
@@ -447,33 +378,6 @@ class AriWsHandler:
             logger.info(
                 "ExternalMedia канал %s активирован (ANSWER)", external_channel_id
             )
-
-            # 🔧 Получаем RTP параметры для регистрации session_uuid в AudioSocket
-            await asyncio.sleep(0.2)  # Даём время Asterisk создать переменные канала
-            rtp_local_address = await self.ari_client.get_variable(
-                external_channel_id, "UNICASTRTP_LOCAL_ADDRESS"
-            )
-            rtp_local_port = await self.ari_client.get_variable(
-                external_channel_id, "UNICASTRTP_LOCAL_PORT"
-            )
-
-            if rtp_local_address and rtp_local_port:
-                logger.info(
-                    "RTP параметры ExternalMedia: address=%s, port=%s",
-                    rtp_local_address,
-                    rtp_local_port,
-                )
-                # Регистрируем session_uuid в AudioSocket
-                await self.register_session_uuid_audiosocket(
-                    ip=rtp_local_address, port=int(rtp_local_port), session_uuid=session_uuid
-                )
-            else:
-                logger.warning(
-                    "Не удалось получить RTP параметры ExternalMedia: "
-                    "address=%s, port=%s - session_uuid НЕ зарегистрирован в AudioSocket!",
-                    rtp_local_address,
-                    rtp_local_port,
-                )
 
             # Проверяем, что оба канала в bridge
             await asyncio.sleep(0.5)  # Даём время на добавление
