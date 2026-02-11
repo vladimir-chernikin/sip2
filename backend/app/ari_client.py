@@ -535,15 +535,58 @@ class AriWsHandler:
         except Exception as e:
             logger.error(f"Ошибка при обработке StasisStart: {e}", exc_info=True)
 
-    async def _cleanup_by_channel(self, channel_id: str) -> None:
-        bridge_id = self.channel_to_bridge.get(channel_id)
-        if not bridge_id:
-            logger.info(
-                "Cleanup: для канала %s bridge не найден, пропуск",
-                channel_id,
-            )
+    async def _cleanup_by_session(self, session_uuid: str) -> None:
+        """
+        Полный cleanup сессии - завершает ВСЕ каналы и удаляет bridge.
+
+        Критически важно: cleanup должен быть per-session, не per-channel!
+        Иначе один канал останется в Stasis навсегда.
+        """
+        channels = self.session_channels.get(session_uuid)
+        if not channels:
+            logger.info("Cleanup: session_uuid=%s не найден, пропуск", session_uuid)
             return
 
+        pjsip_channel_id, external_channel_id = channels
+        bridge_id = self.channel_to_bridge.get(pjsip_channel_id)
+
+        logger.info(
+            "🧹 Cleanup session: session_uuid=%s, pjsip=%s, external=%s, bridge=%s",
+            session_uuid,
+            pjsip_channel_id,
+            external_channel_id,
+            bridge_id,
+        )
+
+        # Завершаем ОБА канала
+        for ch_id in [pjsip_channel_id, external_channel_id]:
+            try:
+                await self.ari_client.hangup_channel(ch_id)
+            except Exception as exc:
+                logger.warning("Cleanup: не удалось завершить канал %s: %s", ch_id, exc)
+
+        # Удаляем bridge
+        if bridge_id:
+            try:
+                await self.ari_client.delete_bridge(bridge_id)
+            except Exception as exc:
+                logger.warning("Cleanup: не удалось удалить bridge %s: %s", bridge_id, exc)
+
+        # Очищаем tracking
+        self.channel_to_bridge.pop(pjsip_channel_id, None)
+        self.channel_to_bridge.pop(external_channel_id, None)
+        self.session_channels.pop(session_uuid, None)
+
+        logger.info(
+            "✅ Cleanup session завершён: session_uuid=%s, bridge=%s",
+            session_uuid,
+            bridge_id,
+        )
+
+    async def _cleanup_by_channel(self, channel_id: str) -> None:
+        """
+        Legacy метод - находит session по каналу и вызывает _cleanup_by_session.
+        """
         # Ищем session_uuid по каналу
         session_uuid = None
         for sid, channels in self.session_channels.items():
@@ -551,33 +594,12 @@ class AriWsHandler:
                 session_uuid = sid
                 break
 
-        try:
-            await self.ari_client.hangup_channel(channel_id)
-        except Exception as exc:
-            logger.warning(
-                "Cleanup: не удалось завершить канал %s: %s",
-                channel_id,
-                exc,
-            )
-
-        try:
-            await self.ari_client.delete_bridge(bridge_id)
-        except Exception as exc:
-            logger.warning(
-                "Cleanup: не удалось удалить bridge %s (channel=%s): %s",
-                bridge_id,
-                channel_id,
-                exc,
-            )
-
-        self.channel_to_bridge.pop(channel_id, None)
         if session_uuid:
-            self.session_channels.pop(session_uuid, None)
+            await self._cleanup_by_session(session_uuid)
+        else:
             logger.info(
-                "Cleanup завершён (session_uuid=%s, channel=%s, bridge=%s)",
-                session_uuid,
+                "Cleanup: для канала %s session не найден, пропуск",
                 channel_id,
-                bridge_id,
             )
 
     async def run(self) -> None:
@@ -610,12 +632,22 @@ class AriWsHandler:
 
                                 if event_type == "StasisStart":
                                     await self.handle_stasis_start(event_data)
-                                elif event_type in ("StasisEnd", "ChannelDestroyed"):
+                                elif event_type == "ChannelHangupRequest":
+                                    # Пользователь кладёт трубку - инициируем cleanup
                                     channel = event_data.get("channel") or {}
                                     channel_id = channel.get("id")
                                     logger.info(
-                                        "Получено завершение канала "
-                                        "(type=%s, channel_id=%s)",
+                                        "📞 ChannelHangupRequest: channel_id=%s - cleanup session",
+                                        channel_id,
+                                    )
+                                    if channel_id:
+                                        await self._cleanup_by_channel(channel_id)
+                                elif event_type in ("StasisEnd", "ChannelDestroyed"):
+                                    # Канал покидает Stasis или уничтожен
+                                    channel = event_data.get("channel") or {}
+                                    channel_id = channel.get("id")
+                                    logger.info(
+                                        "🔚 Канал завершён (type=%s, channel_id=%s)",
                                         event_type,
                                         channel_id,
                                     )
