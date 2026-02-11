@@ -385,19 +385,33 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
 
     def register_session_uuid(self, ip: str, port: int, session_uuid: str) -> bool:
         """
-        Регистрирует session_uuid для будущего RTP соединения с Asterisk.
+        Регистрирует session_uuid и СОЗДАЁТ сессию немедленно.
 
-        Вызывается через HTTP API после создания ExternalMedia.
-        Когда Asterisk отправит первый RTP с (ip, port), будет использован этот UUID.
+        Это разрывает deadlock - audiosocket отправит первый RTP пакет,
+        что заставит Asterisk начать отправку RTP в ответ.
         """
         addr = (ip, port)
-        self.uuid_mapping[addr] = session_uuid
+
+        # Проверяем нет ли уже сессии
+        if addr in self.sessions:
+            logger.warning(
+                "[REGISTER] Сессия для %s:%d уже существует, обновляем UUID",
+                ip, port
+            )
+            # Обновляем UUID существующей сессии
+            self.sessions[addr].session_uuid = session_uuid
+            return True
+
         logger.info(
-            "[REGISTER] Зарегистрирован session_uuid=%s для будущего соединения с %s:%d",
-            session_uuid,
-            ip,
-            port,
+            "[REGISTER] Создание UdpSession для %s:%d с session_uuid=%s",
+            ip, port, session_uuid
         )
+
+        # 🔧 СОЗДАЁМ сессию НЕМЕДЛЕННО и отправляем silence-пакет
+        session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self)
+        self.sessions[addr] = session
+        self.uuid_mapping[addr] = session_uuid
+
         return True
     
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
