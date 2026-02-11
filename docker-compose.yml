@@ -32,7 +32,8 @@ services:
       - ./asterisk/etc/asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/etc/asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
     networks:
-      - ai_voice_net
+      ai_voice_net:
+        ipv4_address: 172.18.0.10  # 🔧 Статический IP для Asterisk
 
   backend:
     build: ./backend
@@ -59,13 +60,14 @@ services:
       ARI_USER: admin
       ARI_PASSWORD: admin123
       ARI_APP: ai_app
-      AUDIOSOCKET_HOST: 172.18.0.2
+      AUDIOSOCKET_HOST: 172.18.0.30    # 🔧 Статический IP audiosocket
       AUDIOSOCKET_PORT: "7575"
       AUDIOSOCKET_API_PORT: "8888"  # 🔧 HTTP API порт audiosocket
     ports:
       - "9000:9000"
     networks:
-      - ai_voice_net
+      ai_voice_net:
+        ipv4_address: 172.18.0.20  # 🔧 Статический IP для Backend
 
   audiosocket:
     build: ./media_sockets
@@ -91,8 +93,12 @@ services:
     expose:
       - "8888"  # 🔧 HTTP API для регистрации session_uuid (внутри Docker сети)
     networks:
-      - ai_voice_net
+      ai_voice_net:
+        ipv4_address: 172.18.0.30  # 🔧 Статический IP для AudioSocket
 
 networks:
   ai_voice_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
