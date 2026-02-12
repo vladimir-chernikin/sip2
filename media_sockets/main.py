@@ -235,6 +235,46 @@ class UdpSession:
             self._log_file_path,
         )
 
+        # Очередь для записи PCM данных обратно в Asterisk
+        write_queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+        # Создаём callback для отправки PCM
+        send_pcm_callback = make_send_pcm_callback(write_queue)
+
+        # Создаём AudioHandler и AudioWebSocketClient
+        self.audio_handler = AudioHandler(
+            session_uuid=self.session_uuid,
+            send_pcm_callback=send_pcm_callback,
+        )
+        self.client = AudioWebSocketClient(
+            session_uuid=self.session_uuid,
+            audio_handler=self.audio_handler,
+            user_transcript_callback=self.log_user_transcript,
+            bot_transcript_callback=self.log_bot_transcript,
+        )
+
+        # Создаём jitter-buffer для входящего потока (Asterisk → OpenAI)
+        # Если буфер отключен, callback будет напрямую вызывать client.push_pcm
+        jitter_callback = self.client.push_pcm
+        self.jitter_buffer = JitterBuffer(
+            output_callback=jitter_callback,
+        ) if ENABLE_JITTER_BUFFER else None
+
+        # 🔧 Отправляем инициализирующий RTP пакет для запуска потока
+        # 160 байт = 20ms silence для alaw (8kHz, 8bit)
+        silence_packet = bytes(160)  # Все нули = silence в G.711 A-law
+        self.transport.sendto(silence_packet, addr)
+        logger.info(
+            "[INIT] Отправлен инициализирующий RTP silence-пакет для %s (160 байт)",
+            addr,
+        )
+
+        # Запускаем задачи
+        self.client_task = asyncio.create_task(self.client.run())
+        self.write_task = asyncio.create_task(
+            write_loop(self.transport, self.remote_addr, write_queue, self)
+        )
+
     def _setup_conversation_log(self) -> None:
         """Создаёт файл для логирования разговора."""
         try:
@@ -287,46 +327,6 @@ class UdpSession:
                 self._log_file_path,
             )
 
-        # Очередь для записи PCM данных обратно в Asterisk
-        write_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
-        # Создаём callback для отправки PCM
-        send_pcm_callback = make_send_pcm_callback(write_queue)
-
-        # Создаём AudioHandler и AudioWebSocketClient
-        self.audio_handler = AudioHandler(
-            session_uuid=self.session_uuid,
-            send_pcm_callback=send_pcm_callback,
-        )
-        self.client = AudioWebSocketClient(
-            session_uuid=self.session_uuid,
-            audio_handler=self.audio_handler,
-            user_transcript_callback=self.log_user_transcript,
-            bot_transcript_callback=self.log_bot_transcript,
-        )
-
-        # Создаём jitter-buffer для входящего потока (Asterisk → OpenAI)
-        # Если буфер отключен, callback будет напрямую вызывать client.push_pcm
-        jitter_callback = self.client.push_pcm
-        self.jitter_buffer = JitterBuffer(
-            output_callback=jitter_callback,
-        ) if ENABLE_JITTER_BUFFER else None
-
-        # 🔧 Отправляем инициализирующий RTP пакет для запуска потока
-        # 160 байт = 20ms silence для alaw (8kHz, 8bit)
-        silence_packet = bytes(160)  # Все нули = silence в G.711 A-law
-        transport.sendto(silence_packet, addr)
-        logger.info(
-            "[INIT] Отправлен инициализирующий RTP silence-пакет для %s (160 байт)",
-            addr,
-        )
-
-        # Запускаем задачи
-        self.client_task = asyncio.create_task(self.client.run())
-        self.write_task = asyncio.create_task(
-            write_loop(self.transport, self.remote_addr, write_queue, self)
-        )
-    
     async def handle_incoming_payload(self, payload: bytes, pt: int) -> None:
         """
         Обрабатывает входящие RTP payload от Asterisk (после парсинга RTP).
