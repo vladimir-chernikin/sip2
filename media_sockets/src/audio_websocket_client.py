@@ -45,6 +45,8 @@ class AudioWebSocketClient:
         audio_handler: AudioHandler,
         voice: str = "alloy",
         transcript_callback: Callable[[str], None] | None = None,
+        user_transcript_callback: Callable[[str], None] | None = None,
+        bot_transcript_callback: Callable[[str], None] | None = None,
     ):
         self.session_uuid = session_uuid
         self.voice = voice or REALTIME_VOICE
@@ -71,6 +73,8 @@ class AudioWebSocketClient:
         self.output_rate = OPENAI_OUTPUT_RATE
         self.response_modalities = REALTIME_MODALITIES
         self.transcript_callback = transcript_callback
+        self.user_transcript_callback = user_transcript_callback
+        self.bot_transcript_callback = bot_transcript_callback
         self._connected_event = asyncio.Event()
         self.vad_threshold = VAD_RMS_THRESHOLD
         self.vad_silence_window = VAD_SILENCE_MS / 1000.0
@@ -708,8 +712,37 @@ class AudioWebSocketClient:
                                 self.session_uuid,
                                 text,
                             )
+                            # 📝 Логируем в файл разговора
+                            if self.user_transcript_callback:
+                                try:
+                                    self.user_transcript_callback(text)
+                                except Exception as e:
+                                    logger.warning(
+                                        "Ошибка в user_transcript_callback: %s",
+                                        e,
+                                    )
 
                     # ---- ИСХОДЯЩАЯ ТРАНСКРИПЦИЯ (что отвечает бот) ----
+                    elif event_type == "response.audio_transcript.done":
+                        text = event.get("text", "").strip()
+                        if text:
+                            logger.info(
+                                "🤖 БОТ ответил (session_uuid=%s, response_id=%s): %s",
+                                self.session_uuid,
+                                response_id,
+                                text,
+                            )
+                            # 📝 Логируем в файл разговора
+                            if self.bot_transcript_callback:
+                                try:
+                                    self.bot_transcript_callback(text)
+                                except Exception as e:
+                                    logger.warning(
+                                        "Ошибка в bot_transcript_callback: %s",
+                                        e,
+                                    )
+                            self._remember_transcript_delta(event)
+
                     elif event_type == "response.audio_transcript.delta":
                         transcript_delta = event.get("delta", "")
                         if transcript_delta:

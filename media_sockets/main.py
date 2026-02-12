@@ -2,6 +2,8 @@ import asyncio
 import logging
 import struct
 import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 
 from aiohttp import web
@@ -221,11 +223,69 @@ class UdpSession:
         self.seq_out: int = 0
         self.ts_out: int = 0
 
+        # 📝 Логирование разговора в файл
+        self._log_file_path: Optional[Path] = None
+        self._log_file: Optional[object] = None
+        self._setup_conversation_log()
+
         logger.info(
-            "Создана новая UDP-сессия для %s, uuid=%s",
+            "Создана новая UDP-сессия для %s, uuid=%s, log_file=%s",
             addr,
             self.session_uuid,
+            self._log_file_path,
         )
+
+    def _setup_conversation_log(self) -> None:
+        """Создаёт файл для логирования разговора."""
+        try:
+            logs_dir = Path("/tmp/conversation_logs")
+            logs_dir.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"call_{timestamp}_{self.session_uuid[:8]}.txt"
+            self._log_file_path = logs_dir / filename
+
+            self._log_file = open(self._log_file_path, "w", encoding="utf-8")
+            self._log_write(f"=== НАЧАЛО ЗВОНКА ===\n")
+            self._log_write(f"Session UUID: {self.session_uuid}\n")
+            self._log_write(f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            self._log_write(f"Remote: {self.addr}\n")
+            self._log_write(f"{'='*40}\n\n")
+        except Exception as e:
+            logger.warning(
+                "Не удалось создать файл лога разговора: %s",
+                e,
+            )
+
+    def _log_write(self, text: str) -> None:
+        """Пишет текст в файл лога разговора."""
+        if self._log_file and not self._log_file.closed:
+            self._log_file.write(text)
+            self._log_file.flush()
+
+    def log_user_transcript(self, text: str) -> None:
+        """Логирует текст пользователя."""
+        if text:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            self._log_write(f"[{timestamp}] 👤 ПОЛЬЗОВАТЕЛЬ: {text}\n")
+
+    def log_bot_transcript(self, text: str) -> None:
+        """Логирует текст бота."""
+        if text:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            self._log_write(f"[{timestamp}] 🤖 БОТ: {text}\n")
+
+    def _close_conversation_log(self) -> None:
+        """Закрывает файл лога разговора."""
+        if self._log_file and not self._log_file.closed:
+            self._log_write(f"\n{'='*40}\n")
+            self._log_write(f"=== КОНЕЦ ЗВОНКА ===\n")
+            self._log_write(f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            self._log_file.close()
+            logger.info(
+                "Файл лога разговора сохранён: %s",
+                self._log_file_path,
+            )
 
         # Очередь для записи PCM данных обратно в Asterisk
         write_queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -241,6 +301,8 @@ class UdpSession:
         self.client = AudioWebSocketClient(
             session_uuid=self.session_uuid,
             audio_handler=self.audio_handler,
+            user_transcript_callback=self.log_user_transcript,
+            bot_transcript_callback=self.log_bot_transcript,
         )
 
         # Создаём jitter-buffer для входящего потока (Asterisk → OpenAI)
@@ -311,6 +373,9 @@ class UdpSession:
             self.session_uuid,
             self.addr,
         )
+
+        # 🔧 Закрываем файл лога разговора
+        self._close_conversation_log()
 
         # Удаляем мэппинг из protocol (если есть)
         if self.protocol and self.addr in self.protocol.uuid_mapping:
@@ -601,7 +666,65 @@ async def main() -> None:
             logger.error("Ошибка в register_uuid: %s", e, exc_info=True)
             return web.json_response({"error": str(e)}, status=500)
 
+    async def unregister_uuid(request: web.Request) -> web.Response:
+        """HTTP API endpoint для отзыва session_uuid и очистки RTP порта."""
+        try:
+            data = await request.json()
+            session_uuid = data.get("session_uuid")
+
+            if not session_uuid:
+                return web.json_response(
+                    {"error": "Missing required field: session_uuid"},
+                    status=400,
+                )
+
+            # Находим и удаляем сессию по session_uuid
+            removed_count = 0
+            sessions_to_remove = []
+
+            for addr, sess in protocol.sessions.items():
+                if sess.session_uuid == session_uuid:
+                    sessions_to_remove.append(addr)
+                    # Очищаем сессию
+                    try:
+                        await sess.cleanup()
+                        removed_count += 1
+                        logger.info(
+                            "[UNREGISTER] Удалена сессия session_uuid=%s, addr=%s",
+                            session_uuid,
+                            addr,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "[UNREGISTER] Ошибка cleanup сессии %s: %s",
+                            session_uuid,
+                            e,
+                        )
+
+            # Удаляем из словаря
+            for addr in sessions_to_remove:
+                protocol.sessions.pop(addr, None)
+                protocol.uuid_mapping.pop(addr, None)
+
+            if removed_count == 0:
+                return web.json_response(
+                    {"error": f"Session not found: {session_uuid}"},
+                    status=404,
+                )
+
+            return web.json_response(
+                {
+                    "status": "unregistered",
+                    "session_uuid": session_uuid,
+                    "removed_count": removed_count,
+                }
+            )
+        except Exception as e:
+            logger.error("Ошибка в unregister_uuid: %s", e, exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
     app.router.add_post("/register", register_uuid)
+    app.router.add_post("/unregister", unregister_uuid)
 
     # Запускаем HTTP API на порту 8888
     runner = web.AppRunner(app)

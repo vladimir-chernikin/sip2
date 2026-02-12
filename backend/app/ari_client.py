@@ -379,6 +379,48 @@ class AriWsHandler:
             )
             return False
 
+    async def unregister_session_uuid_audiosocket(
+        self, session_uuid: str
+    ) -> bool:
+        """
+        Отзывает session_uuid в AudioSocket через HTTP API.
+
+        Это критически важно для освобождения RTP портов!
+        Без этого порты будут накапливаться и новые звонки не смогут работать.
+        """
+        url = f"http://{self.audiosocket_api_host}:{self.audiosocket_api_port}/unregister"
+        payload = {"session_uuid": session_uuid}
+
+        logger.info(
+            "🔓 Отзыв session_uuid=%s из AudioSocket: url=%s",
+            session_uuid,
+            url,
+        )
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=5.0)
+                # Принимаем 404 как OK - сессия могла быть уже удалена
+                if response.status_code == 404:
+                    logger.info(
+                        "Сессия session_uuid=%s уже не существует в AudioSocket (OK)",
+                        session_uuid,
+                    )
+                    return True
+                response.raise_for_status()
+                logger.info(
+                    "✅ Успешно отозван session_uuid=%s из AudioSocket",
+                    session_uuid,
+                )
+                return True
+        except Exception as e:
+            logger.warning(
+                "⚠️ Ошибка отзыва session_uuid=%s из AudioSocket: %s",
+                session_uuid,
+                e,
+            )
+            return False
+
     async def handle_stasis_start(self, event: dict) -> None:
         try:
             logger.debug(
@@ -537,10 +579,10 @@ class AriWsHandler:
 
     async def _cleanup_by_session(self, session_uuid: str) -> None:
         """
-        Полный cleanup сессии - завершает ВСЕ каналы и удаляет bridge.
+        Полный cleanup сессии - завершает ВСЕ каналы, удаляет bridge и отзывает session_uuid из AudioSocket.
 
         Критически важно: cleanup должен быть per-session, не per-channel!
-        Иначе один канал останется в Stasis навсегда.
+        Иначе один канал останется в Stasis навсегда, а RTP порты не освободятся.
         """
         channels = self.session_channels.get(session_uuid)
         if not channels:
@@ -557,6 +599,10 @@ class AriWsHandler:
             external_channel_id,
             bridge_id,
         )
+
+        # 🔧 КРИТИЧЕСКИ: сначала отзываем session_uuid из AudioSocket
+        # Это освободит RTP порт для будущих звонков
+        await self.unregister_session_uuid_audiosocket(session_uuid)
 
         # Завершаем ОБА канала
         for ch_id in [pjsip_channel_id, external_channel_id]:
