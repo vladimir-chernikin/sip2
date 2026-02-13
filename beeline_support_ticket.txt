@@ -1,0 +1,146 @@
+# Лог проблемного звонка для ТП Билайн
+
+## Дата и время
+- **Дата**: 13 февраля 2026 г.
+- **Время**: 12:32:49 UTC (15:32:49 Москва, UTC+3)
+
+## Номера
+- **Номер «А»** (кто звонит): +79038585556
+- **Номер «Б»** (кому звонят): +79202119023
+
+## IP адреса
+- **IP Asterisk**: 109.172.46.197
+- **IP Билайн**: 212.119.246.230:5060 (ip.beeline.ru)
+
+## Что слышно при обрыве
+Звонок сразу обрывается с ошибкой "Service not authorised", гудков нет.
+
+## Проблемный вызов - INVITE
+
+### Запрос от Asterisk:
+```
+INVITE sip:+79202119023@ip.beeline.ru SIP/2.0
+Via: SIP/2.0/UDP 109.172.46.197:5060;rport;branch=z9hG4bKPjeb1f91eb-269a-4d0c-9f68-6ce8972f373e
+From: <sip:SIP030FQU0451O@ip.beeline.ru>;tag=36db90a4-e3b1-453e-9c51-8806f2dd8908
+To: <sip:+79202119023@ip.beeline.ru>
+Contact: <sip:SIP030FQU0451O@109.172.46.197:5060>
+Call-ID: ecd445a6-c1df-481e-8470-8f8c8e8c44d8
+CSeq: 4700 INVITE
+Allow: OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, MESSAGE, INFO, REFER
+Supported: 100rel, timer, replaces, norefersub, histinfo
+Session-Expires: 1800
+Min-SE: 90
+Remote-Party-ID: "+79038585556" <sip:+79038585556@ip.beeline.ru>;party=calling;privacy=off;screen=no
+Max-Forwards: 70
+User-Agent: Asterisk PBX 20.18.2
+Content-Type: application/sdp
+Content-Length:   265
+
+v=0
+o=- 1358795665 1358795665 IN IP4 109.172.46.197
+s=Asterisk
+c=IN IP4 109.172.46.197
+t=0 0
+m=audio 10008 RTP/AVP 8 0 101
+a=rtpmap:8 PCMA/8000
+a=rtpmap:0 PCMU/8000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-16
+a=ptime:20
+a=maxptime:140
+a=sendrecv
+```
+
+### Ответ Билайн #1:
+```
+SIP/2.0 100 Trying
+Via: SIP/2.0/UDP 109.172.46.197:5060;received=109.172.46.197;rport=5060;branch=z9hG4bKPjeb1f91eb-269a-4d0c-9f68-6ce8972f373e
+From: <sip:SIP030FQU0451O@ip.beeline.ru>;tag=36db90a4-e3b1-453e-9c51-8806f2dd8908
+To: <sip:+79202119023@ip.beeline.ru>
+Call-ID: ecd445a6-c1df-481e-8470-8f8c8e8c44d8
+CSeq: 4700 INVITE
+Content-Length: 0
+```
+
+### Ответ Билайн #2 (ОШИБКА):
+```
+SIP/2.0 403 Forbidden
+Via: SIP/2.0/UDP 109.172.46.197:5060;received=109.172.46.197;rport=5060;branch=z9hG4bKPjeb1f91eb-269a-4d0c-9f68-6ce8972f373e
+From: <sip:SIP030FQU0451O@ip.beeline.ru>;tag=36db90a4-e3b1-453e-9c51-8806f2dd8908
+To: <sip:+79202119023@ip.beeline.ru>;tag=mavodi-1-110-c5c-8-0-_525400846AB1-1595-d184700-295ae59-698f19f1-80ad7
+Call-ID: ecd445a6-c1df-481e-8470-8f8c8e8c44d8
+CSeq: 4700 INVITE
+Warning: 127 invaild.com "Service not authorised"
+Server: Mavenir UAG/v1.0 PCSCF/v1.0-14042501o
+Content-Length: 0
+```
+
+## SIP конфигурация
+
+### Регистрация (успешная):
+```
+REGISTER sip:ip.beeline.ru SIP/2.0
+From: <sip:SIP030FQU0451O@ip.beeline.ru>
+To: <sip:ip.beeline.ru>
+Authorization: Digest username="SIP030FQU0451O@ip.beeline.ru", password="***", realm="beeline.com"
+```
+
+Ответ: `SIP/2.0 200 OK` ✅
+
+### PJSIP Конфигурация:
+```
+[beeline]
+type=aor
+contact=sip:ip.beeline.ru
+max_contacts=1
+
+[beeline]
+type=auth
+auth_type=userpass
+username=SIP030FQU0451O@ip.beeline.ru
+password=***
+
+[beeline-reg]
+type=registration
+retry_interval=20
+max_retries=10
+contact_user=SIP030FQU0451O
+expiration=120
+transport=transport-udp
+outbound_auth=beeline
+client_uri=sip:SIP030FQU0451O@ip.beeline.ru
+server_uri=sip:ip.beeline.ru:5060
+
+[beeline]
+type=endpoint
+context=from-beeline
+disallow=all
+allow=alaw
+allow=ulaw
+aors=beeline
+direct_media=no
+dtmf_mode=rfc4733
+rewrite_contact=yes
+rtp_symmetric=yes
+force_rport=yes
+from_user=SIP030FQU0451O
+from_domain=ip.beeline.ru
+callerid="+79038585556" <+79038585556>
+send_rpid=yes
+trust_id_outbound=yes
+media_address=109.172.46.197
+```
+
+## Дополнительная информация
+
+**Оборудование**: Asterisk PBX 20.18.2 в Docker контейнере
+**Внешний IP**: 109.172.46.197
+**IP Билайн сервера**: 212.119.246.230 (ip.beeline.ru)
+
+**Перезагружали оборудование**: Да, многократно
+
+**Вопросы к ТП**:
+1. Почему исходящие звонки отклоняются с "Service not authorised"?
+2. Какие ограничения есть на звонки?
+3. Правильный ли формат INVITE запроса?
+4. Нужно ли добавлять специфичные заголовки?
