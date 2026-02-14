@@ -1,0 +1,9 @@
+Channel: PJSIP/+79202119023@beeline
+CallerID: "+79038585556" <+79038585556>
+MaxRetries: 1
+RetryTime: 60
+WaitTime: 30
+Context: from-internal
+Extension: s
+Priority: 1
+Archive: Yes
