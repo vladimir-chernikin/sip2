@@ -1,0 +1,90 @@
+[general]
+static=yes
+writeprotect=no
+clearglobalvars=no
+
+[from-internal]
+; Внутренние вызовы на других абонентов (на будущее)
+exten => _10XX,1,Dial(SIP/${EXTEN},20)
+ same => n,Hangup()
+
+; Вызов в ИИ-оператор
+; Номер, который будет набирать MicroSIP, например 7000
+exten => 7000,1,NoOp(Вызов в AI-ассистент)
+ same => n,Answer()
+ same => n,Stasis(ai_app)
+ same => n,Hangup()
+
+; Codecs are negotiated via PJSIP (alaw/ulaw). No manual CHANNEL(audiocodec) forcing.
+; Hello-world тест для Zoiper
+exten => 7001,1,NoOp(Hello-world test)
+ same => n,Answer()
+ same => n,Playback(hello-world)
+ same => n,Hangup()
+
+; Echo test (таймаут 5 секунд, чтобы избежать накопления шума)
+exten => 600,1,NoOp(Echo test)
+ same => n,Answer()
+ same => n,Echo(5000)
+ same => n,Hangup()
+
+; Тестовый вызов на +79202119023 с AI ботом (используем Dial с U для Stasis после ответа)
+exten => 8899,1,NoOp(Тестовый вызов на +79202119023 - AI Bot)
+ same => n,Set(CALLERID(num)=+79038585556)
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/+79202119023@beeline,60,U(ai-answer))
+ same => n,Hangup()
+
+; Тестовый вызов на +79202119023 с эхом
+exten => 9999,1,NoOp(Тестовый вызов на +79202119023 - Echo)
+ same => n,Set(CALLERID(num)=+79038585556)
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/+79202119023@beeline,60)
+ same => n,Hangup()
+
+; Обработчик ответа - запускается на вызываемом канале когда он отвечает
+[ai-answer]
+exten => s,1,NoOp(Канал отвечен - подключаем AI бота)
+ same => n,Stasis(ai_app)
+ same => n,Hangup()
+
+; ===== ИСХОДЯЩИЕ ЧЕРЕЗ БИЛАЙН =====
+; Вызов на мобильные/городные (+7XXXXXXXXXX - 12 цифр с +)
+exten => _+7XXXXXXXXXX,1,NoOp(Исходящий вызов через Билайн на ${EXTEN})
+ same => n,Set(CALLERID(num)=+79038585556)     ; 🔧 CallerID: наш номер для исходящих
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/${EXTEN}@beeline,60)
+ same => n,Hangup()
+
+; Вызов на мобильные/городские (7XXXXXXXXXX - 11 цифр без +)
+exten => _7XXXXXXXXXX,1,NoOp(Исходящий вызов через Билайн на ${EXTEN})
+ same => n,Set(CALLERID(num)=+79038585556)     ; 🔧 CallerID: наш номер для исходящих
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/${EXTEN}@beeline,60)
+ same => n,Hangup()
+
+; Вызов на мобильные/городские (8XXXXXXXXXX - 11 цифр, замена 8 на 7)
+exten => _8XXXXXXXXXX,1,NoOp(Исходящий вызов через Билайн на ${EXTEN} -> +7${EXTEN:1})
+ same => n,Set(CALLERID(num)=+79038585556)     ; 🔧 CallerID: наш номер для исходящих
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/+7${EXTEN:1}@beeline,60)
+ same => n,Hangup()
+
+; Вызов на короткие номера (спецслужбы, 3-5 цифр)
+exten => _X.,1,NoOp(Исходящий вызов через Билайн на ${EXTEN})
+ same => n,Set(CALLERID(num)=+79038585556)     ; 🔧 CallerID: наш номер для исходящих
+ same => n,Set(CALLERID(name)=+79038585556)
+ same => n,Dial(PJSIP/${EXTEN}@beeline,60)
+ same => n,Hangup()
+
+[default]
+include => from-internal
+
+; ===== ВХОДЯЩИЕ ОТ БИЛАЙН =====
+[from-beeline]
+; Все входящие от Билайн → AI ассистент
+exten => _.,1,NoOp(Входящий вызов от Билайн на ${EXTEN})
+ same => n,Answer()
+ same => n,Stasis(ai_app)
+ same => n,Hangup()
+

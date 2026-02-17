@@ -210,12 +210,14 @@ class UdpSession:
         transport: asyncio.DatagramTransport,
         session_uuid: Optional[str] = None,
         protocol: Optional["AudioSocketUdpProtocol"] = None,
+        pre_registered: bool = False,
     ):
         self.addr = addr
         self.transport = transport
         self.session_uuid = session_uuid if session_uuid else str(uuid.uuid4())
         self.remote_addr = addr
         self.protocol = protocol  # Ссылка на protocol для удаления мэппинга
+        self.pre_registered = pre_registered
 
         # RTP параметры
         self.inbound_pt: int | None = None
@@ -260,16 +262,21 @@ class UdpSession:
             output_callback=jitter_callback,
         ) if ENABLE_JITTER_BUFFER else None
 
-        # Отправляем инициализирующий RTP пакет для запуска потока
-        silence_packet = bytes(160)
-        self.transport.sendto(silence_packet, addr)
-        logger.info("[INIT] Silence-пакет отправлен для %s", addr)
+        # 🔧 Если pre-registered, НЕ запускаем WebSocket
+        if not self.pre_registered:
+            # Отправляем инициализирующий RTP пакет для запуска потока
+            silence_packet = bytes(160)
+            self.transport.sendto(silence_packet, addr)
+            logger.info("[INIT] Silence-пакет отправлен для %s", addr)
 
-        # Запускаем WebSocket и write loop
-        self.client_task = asyncio.create_task(self.client.run())
-        self.write_task = asyncio.create_task(
-            write_loop(self.transport, self.remote_addr, write_queue, self)
-        )
+            self.client_task = asyncio.create_task(self.client.run())
+            self.write_task = asyncio.create_task(
+                write_loop(self.transport, self.remote_addr, write_queue, self)
+            )
+        else:
+            logger.info("[PRE-REGISTER] WebSocket отложен (uuid=%s)", self.session_uuid)
+            self.client_task = None
+            self.write_task = None
 
     def _setup_conversation_log(self) -> None:
         """Создаёт файл для логирования разговора."""
@@ -362,7 +369,25 @@ class UdpSession:
                 e,
                 exc_info=True,
             )
-
+    
+    def activate_websocket(self):
+        """Активирует WebSocket для pre-registered сессии."""
+        if self.pre_registered and self.client_task is None:
+            logger.info("[ACTIVATE] Активация WebSocket (uuid=%s)", self.session_uuid)
+            self.pre_registered = False
+            
+            write_queue = asyncio.Queue()
+            send_pcm_callback = make_send_pcm_callback(write_queue)
+            self.audio_handler.send_pcm_callback = send_pcm_callback
+            
+            silence_packet = bytes(160)
+            self.transport.sendto(silence_packet, self.addr)
+            
+            self.client_task = asyncio.create_task(self.client.run())
+            self.write_task = asyncio.create_task(
+                write_loop(self.transport, self.remote_addr, write_queue, self)
+            )
+    
     async def cleanup(self) -> None:
         logger.info(
             "[CLEANUP] Завершение сессии (session_uuid=%s, addr=%s)",
@@ -446,32 +471,33 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
 
     def register_session_uuid(self, ip: str, port: int, session_uuid: str) -> bool:
         """
-        Регистрирует session_uuid для будущего RTP потока.
+        Регистрирует session_uuid и СОЗДАЁТ сессию немедленно.
 
-        Если RTP уже начал поступать, возвращает существующий UUID вместо
-        перезаписи (это предотвращает race condition).
-
-        Возвращает False если RTP еще не поступал (pre-registration не поддерживается).
+        Это разрывает deadlock - audiosocket отправит первый RTP пакет,
+        что заставит Asterisk начать отправку RTP в ответ.
         """
         addr = (ip, port)
 
-        # Если сессия уже существует (RTP уже поступает), возвращаем ЕЁ UUID
+        # Проверяем нет ли уже сессии
         if addr in self.sessions:
-            existing_uuid = self.sessions[addr].session_uuid
             logger.warning(
-                "[REGISTER] RTP уже поступает на %s:%d с UUID=%s, игнорируем запрос UUID=%s",
-                ip, port, existing_uuid, session_uuid
+                "[REGISTER] Сессия для %s:%d уже существует, обновляем UUID",
+                ip, port
             )
-            # НЕ обновляем UUID! Возвращаем существующий
-            # Backend должен использовать этот UUID для ARI
-            return False
+            # Обновляем UUID существующей сессии
+            self.sessions[addr].session_uuid = session_uuid
+            return True
 
-        # RTP еще не поступил - сохраняем маппинг для будущего использования
         logger.info(
-            "[REGISTER] Сохраняем маппинг UUID для будущего RTP: %s:%d -> %s",
+            "[REGISTER] Создание UdpSession для %s:%d с session_uuid=%s",
             ip, port, session_uuid
         )
+
+        # 🔧 СОЗДАЁМ pre-registered сессию (БЕЗ silence!)
+        session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self, pre_registered=True)
+        self.sessions[addr] = session
         self.uuid_mapping[addr] = session_uuid
+
         return True
     
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
@@ -529,25 +555,30 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
             # Получаем или создаём сессию
             session = self.sessions.get(addr)
             if session is None:
-                # Проверяем есть ли зарегистрированный UUID для этого адреса
+                # 🔧 Проверяем есть ли зарегистрированный UUID для этого адреса
                 session_uuid = self.uuid_mapping.get(addr)
 
                 if session_uuid:
                     logger.info(
-                        "[SESSION] RTP поступил на prereg-адрес %s, используем зарегистрированный UUID=%s",
+                        "[SESSION] Создание новой UDP-сессии для %s с ПРЕДЗАДАННЫМ uuid=%s "
+                        "(всего активных сессий: %d)",
                         addr,
                         session_uuid,
+                        len(self.sessions),
                     )
-                    # Удаляем из uuid_mapping после использования
-                    del self.uuid_mapping[addr]
                 else:
                     logger.info(
-                        "[SESSION] Создание новой UDP-сессии для %s с новым UUID",
+                        "[SESSION] Создание новой UDP-сессии для адреса %s "
+                        "(всего активных сессий: %d)",
                         addr,
+                        len(self.sessions),
                     )
 
                 session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self)
                 self.sessions[addr] = session
+            elif session.pre_registered:
+                logger.info("[ACTIVATE] RTP для pre-registered (uuid=%s)", session.session_uuid)
+                session.activate_websocket()
             else:
                 logger.debug(
                     "[SESSION] Использование существующей сессии для %s "
