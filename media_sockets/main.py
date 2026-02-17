@@ -210,12 +210,14 @@ class UdpSession:
         transport: asyncio.DatagramTransport,
         session_uuid: Optional[str] = None,
         protocol: Optional["AudioSocketUdpProtocol"] = None,
+        pre_registered: bool = False,
     ):
         self.addr = addr
         self.transport = transport
         self.session_uuid = session_uuid if session_uuid else str(uuid.uuid4())
         self.remote_addr = addr
         self.protocol = protocol  # Ссылка на protocol для удаления мэппинга
+        self.pre_registered = pre_registered
 
         # RTP параметры
         self.inbound_pt: int | None = None
@@ -260,20 +262,21 @@ class UdpSession:
             output_callback=jitter_callback,
         ) if ENABLE_JITTER_BUFFER else None
 
-        # 🔧 Отправляем инициализирующий RTP пакет для запуска потока
-        # 160 байт = 20ms silence для alaw (8kHz, 8bit)
-        silence_packet = bytes(160)  # Все нули = silence в G.711 A-law
-        self.transport.sendto(silence_packet, addr)
-        logger.info(
-            "[INIT] Отправлен инициализирующий RTP silence-пакет для %s (160 байт)",
-            addr,
-        )
+        # 🔧 Если pre-registered, НЕ запускаем WebSocket
+        if not self.pre_registered:
+            # Отправляем инициализирующий RTP пакет для запуска потока
+            silence_packet = bytes(160)
+            self.transport.sendto(silence_packet, addr)
+            logger.info("[INIT] Silence-пакет отправлен для %s", addr)
 
-        # Запускаем задачи
-        self.client_task = asyncio.create_task(self.client.run())
-        self.write_task = asyncio.create_task(
-            write_loop(self.transport, self.remote_addr, write_queue, self)
-        )
+            self.client_task = asyncio.create_task(self.client.run())
+            self.write_task = asyncio.create_task(
+                write_loop(self.transport, self.remote_addr, write_queue, self)
+            )
+        else:
+            logger.info("[PRE-REGISTER] WebSocket отложен (uuid=%s)", self.session_uuid)
+            self.client_task = None
+            self.write_task = None
 
     def _setup_conversation_log(self) -> None:
         """Создаёт файл для логирования разговора."""
@@ -367,6 +370,24 @@ class UdpSession:
                 exc_info=True,
             )
     
+    def activate_websocket(self):
+        """Активирует WebSocket для pre-registered сессии."""
+        if self.pre_registered and self.client_task is None:
+            logger.info("[ACTIVATE] Активация WebSocket (uuid=%s)", self.session_uuid)
+            self.pre_registered = False
+            
+            write_queue = asyncio.Queue()
+            send_pcm_callback = make_send_pcm_callback(write_queue)
+            self.audio_handler.send_pcm_callback = send_pcm_callback
+            
+            silence_packet = bytes(160)
+            self.transport.sendto(silence_packet, self.addr)
+            
+            self.client_task = asyncio.create_task(self.client.run())
+            self.write_task = asyncio.create_task(
+                write_loop(self.transport, self.remote_addr, write_queue, self)
+            )
+    
     async def cleanup(self) -> None:
         logger.info(
             "[CLEANUP] Завершение сессии (session_uuid=%s, addr=%s)",
@@ -385,8 +406,8 @@ class UdpSession:
                 self.addr,
             )
         
-        # Останавливаем клиент
-        self.client_task.cancel()
+        if self.client_task:
+            self.client_task.cancel()
         try:
             await self.client_task
         except asyncio.CancelledError:
@@ -413,8 +434,8 @@ class UdpSession:
         # Останавливаем audio_handler
         await self.audio_handler.cleanup()
         
-        # Останавливаем write_loop
-        self.write_task.cancel()
+        if self.write_task:
+            self.write_task.cancel()
         try:
             await self.write_task
         except asyncio.CancelledError:
@@ -472,8 +493,8 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
             ip, port, session_uuid
         )
 
-        # 🔧 СОЗДАЁМ сессию НЕМЕДЛЕННО и отправляем silence-пакет
-        session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self)
+        # 🔧 СОЗДАЁМ pre-registered сессию (БЕЗ silence!)
+        session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self, pre_registered=True)
         self.sessions[addr] = session
         self.uuid_mapping[addr] = session_uuid
 
@@ -555,6 +576,9 @@ class AudioSocketUdpProtocol(asyncio.DatagramProtocol):
 
                 session = UdpSession(addr, self.transport, session_uuid=session_uuid, protocol=self)
                 self.sessions[addr] = session
+            elif session.pre_registered:
+                logger.info("[ACTIVATE] RTP для pre-registered (uuid=%s)", session.session_uuid)
+                session.activate_websocket()
             else:
                 logger.debug(
                     "[SESSION] Использование существующей сессии для %s "
