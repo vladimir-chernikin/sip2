@@ -94,6 +94,8 @@ services:
       - .env
     expose:
       - "8888"  # 🔧 HTTP API для регистрации session_uuid (внутри Docker сети)
+    volumes:
+      - ./logs:/app/logs  # 🔧 Логи разговоров
     networks:
       ai_voice_net:
         ipv4_address: 172.18.0.30  # 🔧 Статический IP для AudioSocket

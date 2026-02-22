@@ -278,10 +278,10 @@ class UdpSession:
     def _setup_conversation_log(self) -> None:
         """Создаёт файл для логирования разговора."""
         try:
-            logs_dir = Path("/tmp/conversation_logs")
+            logs_dir = Path("/app/logs")
             logs_dir.mkdir(parents=True, exist_ok=True)
 
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"call_{timestamp}_{self.session_uuid[:8]}.txt"
             self._log_file_path = logs_dir / filename
 

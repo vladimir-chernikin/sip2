@@ -229,9 +229,11 @@ class AudioWebSocketClient:
                 "output_audio_format": REALTIME_OUTPUT_FORMAT,
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 500,
+                    "threshold": 0.3,
+                    "prefix_padding_ms": 700,
                     "silence_duration_ms": 800,
+                    "create_response": True,
+                    "interrupt_response": True,
                 },
                 "input_audio_transcription": {
                     "model": "whisper-1",
