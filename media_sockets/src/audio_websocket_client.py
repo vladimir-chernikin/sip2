@@ -755,6 +755,28 @@ class AudioWebSocketClient:
                             )
                             self._remember_transcript_delta(event)
 
+                    # ---- Полная транскрипция из content_part ----
+                    elif event_type == "response.content_part.done":
+                        # Извлекаем transcript из content_part
+                        part = event.get("part", {})
+                        transcript = part.get("transcript", "").strip()
+                        if transcript:
+                            logger.info(
+                                "🤖 БОТ ответил (session_uuid=%s, response_id=%s): %s",
+                                self.session_uuid,
+                                response_id,
+                                transcript,
+                            )
+                            # 📝 Логируем в файл разговора
+                            if self.bot_transcript_callback:
+                                try:
+                                    self.bot_transcript_callback(transcript)
+                                except Exception as e:
+                                    logger.warning(
+                                        "Ошибка в bot_transcript_callback: %s",
+                                        e,
+                                    )
+
                     elif event_type == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
