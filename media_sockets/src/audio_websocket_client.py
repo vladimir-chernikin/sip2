@@ -706,7 +706,8 @@ class AudioWebSocketClient:
                                 delta,
                             )
                     
-                    elif event_type == "conversation.item.input_audio_transcription.done":
+                    elif event_type in ("conversation.item.input_audio_transcription.done",
+                                      "conversation.item.input_audio_transcription.completed"):
                         text = event.get("text", "").strip()
                         if text:
                             logger.info(
