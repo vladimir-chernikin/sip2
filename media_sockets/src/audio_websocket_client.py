@@ -231,9 +231,9 @@ class AudioWebSocketClient:
                 "output_audio_format": REALTIME_OUTPUT_FORMAT,
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.5,  # 🔧 Увеличено с 0.3 для уменьшения детекции фоновых звуков
+                    "threshold": 0.7,  # 🔧 Увеличено с 0.5 для МЕНЬШЕЙ детекции фоновых звуков/дыхания
                     "prefix_padding_ms": 700,
-                    "silence_duration_ms": 800,
+                    "silence_duration_ms": 1200,  # 🔧 Увеличено с 800 для более надёжного детектирования конца речи
                     "create_response": True,
                     "interrupt_response": True,
                 },
@@ -300,6 +300,20 @@ class AudioWebSocketClient:
             "Старт _forward_pcm_to_openai (session_uuid=%s)",
             self.session_uuid,
         )
+
+        # 🔧 Очищаем очередь от застарелых пакетов (накопились пока WebSocket подключался)
+        queue_size = self.pcm_queue.qsize()
+        if queue_size > 10:
+            logger.warning(
+                "Очистка очереди PCM от %d застарелых пакетов (session_uuid=%s)",
+                queue_size,
+                self.session_uuid,
+            )
+            while not self.pcm_queue.empty():
+                try:
+                    self.pcm_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
         try:
             while True:
