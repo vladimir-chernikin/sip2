@@ -260,6 +260,13 @@ class AudioWebSocketClient:
             self.instructions[:300],
         )
 
+        # 🔧 Логируем полный session.update для отладки
+        logger.debug(
+            "[SESSION] Отправка session.update (session_uuid=%s): %s",
+            self.session_uuid,
+            session_config,
+        )
+
         await self.send_event(session_config)
         logger.info(
             "[SESSION] Отправлена конфигурация сессии (session.update), "
@@ -270,10 +277,10 @@ class AudioWebSocketClient:
 
         # 🔧 OpenAI НЕ подтверждает session.update событиями!
         # Особенность API - session.update применяется БЕЗ session.updated подтверждения
-        # Просто отправляем greeting через 0.5 сек после session.update
-        await asyncio.sleep(0.5)
+        # Но нужно время чтобы настройки применились (~1-1.5 сек)
+        await asyncio.sleep(1.5)
         logger.info(
-            "[SESSION] session.update отправлен, отправляем greeting (session_uuid=%s)",
+            "[SESSION] session.update отправлен, ждём 1.5 сек и отправляем greeting (session_uuid=%s)",
             self.session_uuid,
         )
 
