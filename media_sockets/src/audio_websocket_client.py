@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import uuid
 from collections.abc import Callable
 
 import numpy as np
@@ -822,6 +823,16 @@ class AudioWebSocketClient:
                                 self.session_uuid,
                                 self._active_response_id,
                                 was_running,
+                            )
+                            # 🔧 ОТПРАВЛЯЕМ response.cancel в OpenAI для остановки генерации
+                            cancel_event = {
+                                "type": "response.cancel",
+                                "event_id": f"evt_{uuid.uuid4().hex}",
+                            }
+                            await self.send_event(cancel_event)
+                            logger.info(
+                                "[SERVER-BARGE-IN] 🛑 Отправлен response.cancel в OpenAI (session_uuid=%s)",
+                                self.session_uuid,
                             )
                             self._active_response_id = None
                             self._awaiting_response = False
