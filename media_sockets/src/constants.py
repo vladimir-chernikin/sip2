@@ -49,7 +49,7 @@ VAD_SILENCE_MS = int(os.getenv("AUDIO_VAD_SILENCE_MS", "550"))  # Уменьше
 VAD_RMS_THRESHOLD = float(os.getenv("AUDIO_VAD_RMS_THRESHOLD", "0.08"))
 
 # Jitter-buffer параметры
-ENABLE_JITTER_BUFFER = os.getenv("ENABLE_JITTER_BUFFER", "true").lower() == "true"
+ENABLE_JITTER_BUFFER = os.getenv("ENABLE_JITTER_BUFFER", "false").lower() == "true"  # 🔧 ОТКЛЮЧЕН для снижения задержки
 JITTER_BUFFER_TARGET_MS = int(os.getenv("JITTER_BUFFER_TARGET_MS", "40"))
 OUTPUT_BUFFER_TARGET_MS = int(os.getenv("OUTPUT_BUFFER_TARGET_MS", "40"))
 
