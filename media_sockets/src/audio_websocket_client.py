@@ -218,6 +218,9 @@ class AudioWebSocketClient:
             self.session_uuid,
         )
 
+        # 🔧 Небольшая задержка чтобы OpenAI был готов принять session.update
+        await asyncio.sleep(0.2)
+
         # Конфигурация сессии с server_vad
         # Примечание: input_sample_rate и output_sample_rate не поддерживаются
         # в session.update, они определяются через input_audio_format и output_audio_format.
@@ -268,14 +271,14 @@ class AudioWebSocketClient:
 
         # 🔧 Ждём подтверждения session.update ПЕРЕД отправкой greeting
         try:
-            await asyncio.wait_for(self._session_updated_event.wait(), timeout=2.0)
+            await asyncio.wait_for(self._session_updated_event.wait(), timeout=5.0)
             logger.info(
                 "[SESSION] session.update подтверждён, отправляем greeting (session_uuid=%s)",
                 self.session_uuid,
             )
         except asyncio.TimeoutError:
             logger.warning(
-                "[SESSION] session.update НЕ подтверждён за 2 сек! "
+                "[SESSION] session.update НЕ подтверждён за 5 сек! "
                 "Используем дефолтные настройки OpenAI! (session_uuid=%s)",
                 self.session_uuid,
             )
