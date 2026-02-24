@@ -231,8 +231,8 @@ class AudioWebSocketClient:
                 "output_audio_format": REALTIME_OUTPUT_FORMAT,
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.7,  # 🔧 Увеличено с 0.5 для МЕНЬШЕЙ детекции фоновых звуков/дыхания
-                    "prefix_padding_ms": 1500,  # 🔧 Увеличено с 700 - игнорировать речь 1.5 сек в начале ответа (избегать наплывания фраз)
+                    "threshold": 0.85,  # 🔧 Увеличено с 0.7 - детектировать только громкую речь, игнорировать фоновые звуки
+                    "prefix_padding_ms": 800,  # 🔧 Баланс между наплыванием фраз и возможностью прервать (1500 было слишком много)
                     "silence_duration_ms": 1200,  # 🔧 Увеличено с 800 для более надёжного детектирования конца речи
                     "create_response": True,
                     "interrupt_response": True,
