@@ -459,6 +459,12 @@ class AriWsHandler:
             bridge_id = await self.ari_client.create_bridge()
             logger.info("Создан bridge %s для channel_id=%s", bridge_id, channel_id)
 
+            # 🔧 Answer() PJSIP канал ПЕРЕД добавлением в bridge - КРИТИЧНО!
+            await self.ari_client.answer_channel(channel_id)
+            logger.info(
+                "PJSIP канал %s отвечен (ANSWER)", channel_id
+            )
+
             # Добавляем абонента в bridge
             await self.ari_client.add_channel_to_bridge(bridge_id, channel_id)
             logger.info(
