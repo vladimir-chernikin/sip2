@@ -83,6 +83,7 @@ class AudioWebSocketClient:
         self._awaiting_response = False
         self._commit_in_progress = False  # Защита от повторных commit
         self._user_transcript_accumulator = ""  # 🔧 Аккумулятор для delta транскрипции пользователя
+        self._speech_started_since_last_commit = False  # 🔧 Флаг - была ли речь с последнего ответа
         self._last_commit_ts: float | None = None  # Время последнего commit
         self._silence_task: asyncio.Task | None = None
         self._transcript_buffers: dict[str, list[str]] = {}
@@ -231,11 +232,14 @@ class AudioWebSocketClient:
                 "output_audio_format": REALTIME_OUTPUT_FORMAT,
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.85,  # 🔧 Увеличено с 0.7 - детектировать только громкую речь, игнорировать фоновые звуки
-                    "prefix_padding_ms": 800,  # 🔧 Баланс между наплыванием фраз и возможностью прервать (1500 было слишком много)
-                    "silence_duration_ms": 1200,  # 🔧 Увеличено с 800 для более надёжного детектирования конца речи
-                    "create_response": True,
+                    "threshold": 0.5,  # 🔧 Снижаем до 0.5 - 0.85 был слишком высоким, пропускал тихую речь
+                    "prefix_padding_ms": 600,  # 🔧 Уменьшаем до 600 мс для более быстрого прерывания
+                    "silence_duration_ms": 1000,  # 🔧 1 сек тишины = конец речи
+                    "create_response": False,  # 🔧 ВЫКЛЮЧАЕМ! Бот будет отвечать только ЯВНО при создании события
                     "interrupt_response": True,
+                },
+                "input_audio_noise_reduction": {
+                    "type": "auto"  # 🔧 Включаем шумоподавление OpenAI для улучшения качества
                 },
                 "input_audio_transcription": {
                     "model": "whisper-1",
@@ -831,6 +835,8 @@ class AudioWebSocketClient:
 
                     # ---- Сигнал: пользователь начал говорить (barge-in от OpenAI) ----
                     elif event_type == "input_audio_buffer.speech_started":
+                        # 🔧 Фиксируем что речь началась
+                        self._speech_started_since_last_commit = True
                         # Server-side barge-in: останавливаем воспроизведение текущего ответа
                         was_running = self.audio_handler.running
                         self.audio_handler.interrupt_playback()
@@ -866,21 +872,38 @@ class AudioWebSocketClient:
 
                     # ---- Сигнал: пользователь закончил говорить ----
                     elif event_type == "input_audio_buffer.speech_stopped":
-                        # При server_vad сервер сам создаст response, commit не нужен
+                        # 🔧 При create_response:False нужно вручную создавать response
+                        # НО только если действительно была речь (транскрипция или speech_started)
                         silence_duration = (
                             (asyncio.get_event_loop().time() - self._last_voice_ts)
                             if self._last_voice_ts
                             else None
                         )
-                        logger.info(
-                            "[VAD] Речь абонента закончена (session_uuid=%s), "
-                            "ожидаем автоматический ответ от сервера "
-                            "(awaiting_response=%s, silence_duration=%.3f сек)",
-                            self.session_uuid,
-                            self._awaiting_response,
-                            silence_duration if silence_duration else 0.0,
-                        )
-                        # Не вызываем commit и response.create - сервер сделает это сам
+                        has_transcript = len(self._user_transcript_accumulator.strip()) > 0
+                        has_speech = self._speech_started_since_last_commit
+
+                        if has_speech or has_transcript:
+                            logger.info(
+                                "[VAD] Речь абонента закончена (session_uuid=%s), "
+                                "создаём ответ вручную (transcript=%s, speech=%s, silence=%.3f сек)",
+                                self.session_uuid,
+                                "да" if has_transcript else "нет",
+                                "да" if has_speech else "нет",
+                                silence_duration if silence_duration else 0.0,
+                            )
+                            # 🔧 ВРУЧНУЮ создаём response (create_response:False)
+                            create_event = {
+                                "type": "response.create",
+                                "event_id": f"evt_{uuid.uuid4().hex}",
+                            }
+                            await self.send_event(create_event)
+                            self._speech_started_since_last_commit = False
+                        else:
+                            logger.info(
+                                "[VAD] Речь абонента закончена, но НЕ создаём ответ "
+                                "(нет транскрипции и speech_started, session_uuid=%s) - пропускаем",
+                                self.session_uuid,
+                            )
 
                     elif event_type == "response.created":
                         created_id = event.get("response", {}).get("id")
