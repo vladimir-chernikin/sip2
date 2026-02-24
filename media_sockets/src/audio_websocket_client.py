@@ -873,22 +873,20 @@ class AudioWebSocketClient:
                     # ---- Сигнал: пользователь закончил говорить ----
                     elif event_type == "input_audio_buffer.speech_stopped":
                         # 🔧 При create_response:False нужно вручную создавать response
-                        # НО только если действительно была речь (транскрипция или speech_started)
+                        # КРИТИЧНО: создаём ответ ТОЛЬКО если есть транскрипция (текст)!
                         silence_duration = (
                             (asyncio.get_event_loop().time() - self._last_voice_ts)
                             if self._last_voice_ts
                             else None
                         )
                         has_transcript = len(self._user_transcript_accumulator.strip()) > 0
-                        has_speech = self._speech_started_since_last_commit
 
-                        if has_speech or has_transcript:
+                        if has_transcript:
                             logger.info(
                                 "[VAD] Речь абонента закончена (session_uuid=%s), "
-                                "создаём ответ вручную (transcript=%s, speech=%s, silence=%.3f сек)",
+                                "создаём ответ вручную (transcript=%s, silence=%.3f сек)",
                                 self.session_uuid,
-                                "да" if has_transcript else "нет",
-                                "да" if has_speech else "нет",
+                                "да",
                                 silence_duration if silence_duration else 0.0,
                             )
                             # 🔧 ВРУЧНУЮ создаём response (create_response:False)
@@ -901,7 +899,7 @@ class AudioWebSocketClient:
                         else:
                             logger.info(
                                 "[VAD] Речь абонента закончена, но НЕ создаём ответ "
-                                "(нет транскрипции и speech_started, session_uuid=%s) - пропускаем",
+                                "(нет транскрипции - был шум/тишина, session_uuid=%s) - пропускаем",
                                 self.session_uuid,
                             )
 
