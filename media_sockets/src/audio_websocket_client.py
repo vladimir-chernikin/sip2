@@ -82,6 +82,7 @@ class AudioWebSocketClient:
         self._last_voice_ts: float | None = None
         self._awaiting_response = False
         self._commit_in_progress = False  # Защита от повторных commit
+        self._user_transcript_accumulator = ""  # 🔧 Аккумулятор для delta транскрипции пользователя
         self._last_commit_ts: float | None = None  # Время последнего commit
         self._silence_task: asyncio.Task | None = None
         self._transcript_buffers: dict[str, list[str]] = {}
@@ -230,7 +231,7 @@ class AudioWebSocketClient:
                 "output_audio_format": REALTIME_OUTPUT_FORMAT,
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.3,
+                    "threshold": 0.5,  # 🔧 Увеличено с 0.3 для уменьшения детекции фоновых звуков
                     "prefix_padding_ms": 700,
                     "silence_duration_ms": 800,
                     "create_response": True,
@@ -706,10 +707,13 @@ class AudioWebSocketClient:
                                 self.session_uuid,
                                 delta,
                             )
-                    
+                            # 🔧 Аккумулируем delta текст
+                            self._user_transcript_accumulator += delta
+
                     elif event_type in ("conversation.item.input_audio_transcription.done",
                                       "conversation.item.input_audio_transcription.completed"):
-                        text = event.get("text", "").strip()
+                        # 🔧 На completed отправляем накопленный текст
+                        text = self._user_transcript_accumulator.strip()
                         if text:
                             logger.info(
                                 "🎤 ПОЛЬЗОВАТЕЛЬ сказал (session_uuid=%s): %s",
@@ -725,6 +729,8 @@ class AudioWebSocketClient:
                                         "Ошибка в user_transcript_callback: %s",
                                         e,
                                     )
+                        # Сбрасываем аккумулятор
+                        self._user_transcript_accumulator = ""
 
                     # ---- ИСХОДЯЩАЯ ТРАНСКРИПЦИЯ (что отвечает бот) ----
                     elif event_type == "response.audio_transcript.done":
