@@ -77,7 +77,6 @@ class AudioWebSocketClient:
         self.user_transcript_callback = user_transcript_callback
         self.bot_transcript_callback = bot_transcript_callback
         self._connected_event = asyncio.Event()
-        self._session_updated_event = asyncio.Event()  # 🔧 Ожидание подтверждения session.update
         self.vad_threshold = VAD_RMS_THRESHOLD
         self.vad_silence_window = VAD_SILENCE_MS / 1000.0
         self._last_voice_ts: float | None = None
@@ -269,19 +268,14 @@ class AudioWebSocketClient:
             len(self.instructions),
         )
 
-        # 🔧 Ждём подтверждения session.update ПЕРЕД отправкой greeting
-        try:
-            await asyncio.wait_for(self._session_updated_event.wait(), timeout=5.0)
-            logger.info(
-                "[SESSION] session.update подтверждён, отправляем greeting (session_uuid=%s)",
-                self.session_uuid,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "[SESSION] session.update НЕ подтверждён за 5 сек! "
-                "Используем дефолтные настройки OpenAI! (session_uuid=%s)",
-                self.session_uuid,
-            )
+        # 🔧 OpenAI НЕ подтверждает session.update событиями!
+        # Особенность API - session.update применяется БЕЗ session.updated подтверждения
+        # Просто отправляем greeting через 0.5 сек после session.update
+        await asyncio.sleep(0.5)
+        logger.info(
+            "[SESSION] session.update отправлен, отправляем greeting (session_uuid=%s)",
+            self.session_uuid,
+        )
 
         # Отправляем событие для создания первого ответа (приветствие)
         # OpenAI Realtime НЕ генерирует ответ автоматически, нужно явно запросить
@@ -977,14 +971,6 @@ class AudioWebSocketClient:
                             "Ошибка ответа модели (session_uuid=%s): %s",
                             self.session_uuid,
                             event,
-                        )
-
-                    # ---- Подтверждение обновления сессии ----
-                    elif event_type == "session.updated":
-                        self._session_updated_event.set()
-                        logger.info(
-                            "[SESSION] session.updated подтверждён (session_uuid=%s)",
-                            self.session_uuid,
                         )
 
                     # Можно дополнительно логировать другие типы для отладки
