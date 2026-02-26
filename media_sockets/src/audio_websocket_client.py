@@ -239,7 +239,7 @@ class AudioWebSocketClient:
                     "threshold": 0.5,  # 🔧 Снижаем до 0.5 - 0.85 был слишком высоким, пропускал тихую речь
                     "prefix_padding_ms": 600,  # 🔧 Уменьшаем до 600 мс для более быстрого прерывания
                     "silence_duration_ms": 1000,  # 🔧 1 сек тишины = конец речи
-                    "create_response": False,  # 🔧 ВЫКЛЮЧАЕМ! Бот будет отвечать только ЯВНО при создании события
+                    "create_response": True,  # 🔧 ВКЛЮЧАЕМ! OpenAI будет автоматически создавать ответы на речь
                     "interrupt_response": True,
                 },
                 "input_audio_transcription": {
@@ -942,17 +942,13 @@ class AudioWebSocketClient:
                         if has_transcript:
                             logger.info(
                                 "[VAD] Речь абонента закончена (session_uuid=%s), "
-                                "создаём ответ вручную (transcript=%s, silence=%.3f сек)",
+                                "transcript=%s, silence=%.3f сек - OpenAI создаёт ответ АВТОМАТИЧЕСКИ",
                                 self.session_uuid,
                                 "да",
                                 silence_duration if silence_duration else 0.0,
                             )
-                            # 🔧 ВРУЧНУЮ создаём response (create_response:False)
-                            create_event = {
-                                "type": "response.create",
-                                "event_id": f"evt_{uuid.uuid4().hex}",
-                            }
-                            await self.send_event(create_event)
+                            # 🔧 При create_response:True OpenAI создаёт ответ АВТОМАТИЧЕСКИ!
+                            # Ручное создание НЕ нужно и создаст дубликат
                             self._speech_started_since_last_commit = False
                         else:
                             logger.info(
