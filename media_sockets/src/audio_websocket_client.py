@@ -241,9 +241,6 @@ class AudioWebSocketClient:
                     "create_response": False,  # 🔧 ВЫКЛЮЧАЕМ! Бот будет отвечать только ЯВНО при создании события
                     "interrupt_response": True,
                 },
-                "input_audio_noise_reduction": {
-                    "type": "auto"  # 🔧 Включаем шумоподавление OpenAI для улучшения качества
-                },
                 "input_audio_transcription": {
                     "model": "whisper-1",
                     "language": "ru",
