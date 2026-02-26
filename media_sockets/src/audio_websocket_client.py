@@ -209,7 +209,9 @@ class AudioWebSocketClient:
             self.session_uuid,
         )
 
-        self.ws = await websockets.connect(self.url, extra_headers=headers)
+        # 🔧 Увеличиваем timeout до 30 секунд (было 10 по умолчанию)
+        # OpenAI API иногда перегружен и отвечает медленнее
+        self.ws = await websockets.connect(self.url, extra_headers=headers, open_timeout=30)
         self.connected = True
         self._connected_event.set()
 
