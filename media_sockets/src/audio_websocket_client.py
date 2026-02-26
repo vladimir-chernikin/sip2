@@ -1019,6 +1019,23 @@ class AudioWebSocketClient:
                             event,
                         )
 
+                    elif event_type == "response.done":
+                        # 🔧 КРИТИЧЕСКИЙ ФИКС: response.done отправляется OpenAI (НЕ response.completed!)
+                        self._awaiting_response = False
+                        self._commit_in_progress = False
+                        done_response = event.get("response", {}) or {}
+                        done_id = done_response.get("id")
+                        status = done_response.get("status", "unknown")
+                        if done_id:
+                            self._transcript_buffers.pop(done_id, None)
+                        self._finish_response(done_id, status)
+                        logger.info(
+                            "[RESPONSE] response.done (session_uuid=%s, response_id=%s, status=%s)",
+                            self.session_uuid,
+                            done_id,
+                            status,
+                        )
+
                     # Можно дополнительно логировать другие типы для отладки
                     else:
                         # Не спамим INFO, но для отладки можно включить
