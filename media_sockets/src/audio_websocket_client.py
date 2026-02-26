@@ -90,7 +90,8 @@ class AudioWebSocketClient:
         self._active_response_id: str | None = None
         self._response_audio_bytes = 0
         self._response_audio_chunks = 0
-        
+        self._is_bot_speaking = False  # 🔧 Флаг - бот говорит сейчас (echo protection)
+
         # Локальный barge-in: отслеживание RMS фреймов во время воспроизведения
         self._enable_local_barge_in = ENABLE_LOCAL_BARGE_IN
         self._barge_in_frames_threshold = BARGE_IN_FRAMES_THRESHOLD
@@ -517,6 +518,7 @@ class AudioWebSocketClient:
                     self._active_response_id,
                 )
                 self._active_response_id = None
+                self._is_bot_speaking = False  # 🔧 Бот закончил - можно распознавать речь
                 self._awaiting_response = False
 
         # Обновляем время последней голосовой активности
@@ -594,6 +596,7 @@ class AudioWebSocketClient:
             self.audio_handler.interrupt_playback()
 
         self._active_response_id = response_id
+        self._is_bot_speaking = True  # 🔧 Бот говорит - включаем echo protection
         self._response_audio_bytes = 0
         self._response_audio_chunks = 0
         logger.info(
@@ -631,6 +634,7 @@ class AudioWebSocketClient:
                 self._response_audio_bytes,
             )
             self._active_response_id = None
+            self._is_bot_speaking = False  # 🔧 Бот закончил - можно распознавать речь
             self._response_audio_bytes = 0
             self._response_audio_chunks = 0
     # ========= ПРИЁМ СОБЫТИЙ ОТ OPENAI =========
@@ -757,33 +761,44 @@ class AudioWebSocketClient:
                         # 🔧 На completed отправляем накопленный текст
                         text = self._user_transcript_accumulator.strip()
                         if text:
-                            logger.info(
-                                "🎤 ПОЛЬЗОВАТЕЛЬ сказал (session_uuid=%s): %s",
-                                self.session_uuid,
-                                text,
-                            )
-                            # 📝 Логируем в файл разговора
-                            if self.user_transcript_callback:
-                                try:
-                                    self.user_transcript_callback(text)
-                                except Exception as e:
-                                    logger.warning(
-                                        "Ошибка в user_transcript_callback: %s",
-                                        e,
-                                    )
-                            # 🔧 КРИТИЧНЫЙ ФИКС: создаём ответ ЗДЕСЬ, когда транскрипция готова!
-                            # create_response: False означает что нужно ВРУЧНУЮ создавать response
-                            if self._speech_started_since_last_commit:
-                                logger.info(
-                                    "[VAD] Создаём ответ на transcript (session_uuid=%s)",
+                            # 🔧 ECHO PROTECTION: игнорируем если бот говорит
+                            if self._is_bot_speaking:
+                                logger.warning(
+                                    "[ECHO-PROTECTION] Игнорируем транскрипцию во время речи бота! "
+                                    "session_uuid=%s, transcript=%s (echo, not user)",
                                     self.session_uuid,
+                                    text,
                                 )
-                                create_event = {
-                                    "type": "response.create",
-                                    "event_id": f"evt_{uuid.uuid4().hex}",
-                                }
-                                await self.send_event(create_event)
+                                self._user_transcript_accumulator = ""
                                 self._speech_started_since_last_commit = False
+                            else:
+                                logger.info(
+                                    "🎤 ПОЛЬЗОВАТЕЛЬ сказал (session_uuid=%s): %s",
+                                    self.session_uuid,
+                                    text,
+                                )
+                                # 📝 Логируем в файл разговора
+                                if self.user_transcript_callback:
+                                    try:
+                                        self.user_transcript_callback(text)
+                                    except Exception as e:
+                                        logger.warning(
+                                            "Ошибка в user_transcript_callback: %s",
+                                            e,
+                                        )
+                                # 🔧 КРИТИЧНЫЙ ФИКС: создаём ответ ЗДЕСЬ, когда транскрипция готова!
+                                # create_response: False означает что нужно ВРУЧНУЮ создавать response
+                                if self._speech_started_since_last_commit:
+                                    logger.info(
+                                        "[VAD] Создаём ответ на transcript (session_uuid=%s)",
+                                        self.session_uuid,
+                                    )
+                                    create_event = {
+                                        "type": "response.create",
+                                        "event_id": f"evt_{uuid.uuid4().hex}",
+                                    }
+                                    await self.send_event(create_event)
+                                    self._speech_started_since_last_commit = False
                         else:
                             logger.warning(
                                 "[WHISPER] Пустая транскрипция пользователя! session_uuid=%s, accumulated_text=%s",
