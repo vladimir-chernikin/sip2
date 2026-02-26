@@ -45,8 +45,8 @@ REALTIME_MODEL = os.getenv(
 REALTIME_URL = f"wss://api.openai.com/v1/realtime?model={REALTIME_MODEL}"
 
 # VAD параметры (улучшены для более отзывчивого поведения)
-VAD_SILENCE_MS = int(os.getenv("AUDIO_VAD_SILENCE_MS", "550"))  # Уменьшено с 900 для быстрого ответа
-VAD_RMS_THRESHOLD = float(os.getenv("AUDIO_VAD_RMS_THRESHOLD", "0.08"))
+VAD_SILENCE_MS = int(os.getenv("AUDIO_VAD_SILENCE_MS", "900"))  # 🔧 Увеличено до 900мс для уменьшения обрывов на паузах
+VAD_RMS_THRESHOLD = float(os.getenv("AUDIO_VAD_RMS_THRESHOLD", "0.12"))  # 🔧 Увеличено до 0.12 для уменьшения false positives
 
 # Jitter-buffer параметры
 ENABLE_JITTER_BUFFER = os.getenv("ENABLE_JITTER_BUFFER", "true").lower() == "true"

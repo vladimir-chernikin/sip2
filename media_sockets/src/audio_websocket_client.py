@@ -230,8 +230,9 @@ class AudioWebSocketClient:
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
-                    "prefix_padding_ms": 500,
-                    "silence_duration_ms": 800,
+                    "prefix_padding_ms": 300,  # 🔧 Уменьшено до 300мс для быстрой реакции на прерывание
+                    "silence_duration_ms": 900,  # 🔧 Увеличено до 900мс для уменьшения обрывов на паузах
+                    "create_response": False,  # 🔧 ОТКЛЮЧАЕМ авто-ответы, бот будет отвечать только явно
                 },
                 "input_audio_transcription": {
                     "model": "whisper-1",
