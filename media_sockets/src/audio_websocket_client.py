@@ -714,7 +714,7 @@ class AudioWebSocketClient:
                         "conversation.item.input_audio_transcription.done",
                         "conversation.item.input_audio_transcription.completed",
                     ):
-                        text = event.get("text", "").strip()
+                        text = event.get("transcript", "").strip()  # 🔧 FIX: поле 'transcript', не 'text'!
                         if text:
                             # 🔧 ECHO PROTECTION: игнорируем если бот говорит
                             if self._is_bot_speaking:
