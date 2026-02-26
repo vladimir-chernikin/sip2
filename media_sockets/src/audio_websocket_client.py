@@ -746,6 +746,14 @@ class AudioWebSocketClient:
 
                     elif event_type in ("conversation.item.input_audio_transcription.done",
                                       "conversation.item.input_audio_transcription.completed"):
+                        # 🔧 ОТЛАДКА: логируем полный event чтобы понять почему Whisper не распознаёт
+                        transcript = event.get("transcript")
+                        logger.debug(
+                            "[WHISPER] input_audio_transcription.completed (session_uuid=%s): transcript=%s, full_event=%s",
+                            self.session_uuid,
+                            transcript,
+                            event,
+                        )
                         # 🔧 На completed отправляем накопленный текст
                         text = self._user_transcript_accumulator.strip()
                         if text:
@@ -763,6 +771,12 @@ class AudioWebSocketClient:
                                         "Ошибка в user_transcript_callback: %s",
                                         e,
                                     )
+                        else:
+                            logger.warning(
+                                "[WHISPER] Пустая транскрипция пользователя! session_uuid=%s, accumulated_text=%s",
+                                self.session_uuid,
+                                self._user_transcript_accumulator,
+                            )
                         # Сбрасываем аккумулятор
                         self._user_transcript_accumulator = ""
 
