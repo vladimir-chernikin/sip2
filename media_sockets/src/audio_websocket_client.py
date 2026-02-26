@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import uuid
 from collections.abc import Callable
 
 import numpy as np
@@ -93,6 +94,7 @@ class AudioWebSocketClient:
         self._barge_in_frames_threshold = BARGE_IN_FRAMES_THRESHOLD
         self._recent_rms_values: list[float] = []  # Последние RMS значения
         self._consecutive_high_rms = 0  # Количество подряд идущих фреймов с высоким RMS
+        self._is_bot_speaking = False  # 🔧 Echo protection - бот говорит сейчас
         if not self._enable_local_barge_in:
             logger.warning(
                 "Локальный barge-in отключён (session_uuid=%s); перебивание "
@@ -480,6 +482,7 @@ class AudioWebSocketClient:
                     self._active_response_id,
                 )
                 self._active_response_id = None
+                self._is_bot_speaking = False  # 🔧 Echo protection - бот прерван
                 self._awaiting_response = False
 
         # Обновляем время последней голосовой активности
@@ -557,6 +560,7 @@ class AudioWebSocketClient:
             self.audio_handler.interrupt_playback()
 
         self._active_response_id = response_id
+        self._is_bot_speaking = True  # 🔧 Echo protection - бот говорит
         self._response_audio_bytes = 0
         self._response_audio_chunks = 0
         logger.info(
@@ -594,6 +598,7 @@ class AudioWebSocketClient:
                 self._response_audio_bytes,
             )
             self._active_response_id = None
+            self._is_bot_speaking = False  # 🔧 Echo protection - бот закончил
             self._response_audio_bytes = 0
             self._response_audio_chunks = 0
     # ========= ПРИЁМ СОБЫТИЙ ОТ OPENAI =========
@@ -705,23 +710,45 @@ class AudioWebSocketClient:
                                 delta,
                             )
                     
-                    elif event_type == "conversation.item.input_audio_transcription.done":
+                    elif event_type in (
+                        "conversation.item.input_audio_transcription.done",
+                        "conversation.item.input_audio_transcription.completed",
+                    ):
                         text = event.get("text", "").strip()
                         if text:
-                            logger.info(
-                                "🎤 ПОЛЬЗОВАТЕЛЬ сказал (session_uuid=%s): %s",
-                                self.session_uuid,
-                                text,
-                            )
-                            # 📝 Логируем в файл разговора
-                            if self.user_transcript_callback:
-                                try:
-                                    self.user_transcript_callback(text)
-                                except Exception as e:
-                                    logger.warning(
-                                        "Ошибка в user_transcript_callback: %s",
-                                        e,
-                                    )
+                            # 🔧 ECHO PROTECTION: игнорируем если бот говорит
+                            if self._is_bot_speaking:
+                                logger.warning(
+                                    "[ECHO-PROTECTION] Игнорируем транскрипцию во время речи бота! "
+                                    "session_uuid=%s, transcript=%s (это echo, не пользователь)",
+                                    self.session_uuid,
+                                    text,
+                                )
+                            else:
+                                logger.info(
+                                    "🎤 ПОЛЬЗОВАТЕЛЬ сказал (session_uuid=%s): %s",
+                                    self.session_uuid,
+                                    text,
+                                )
+                                # 📝 Логируем в файл разговора
+                                if self.user_transcript_callback:
+                                    try:
+                                        self.user_transcript_callback(text)
+                                    except Exception as e:
+                                        logger.warning(
+                                            "Ошибка в user_transcript_callback: %s",
+                                            e,
+                                        )
+                                # 🔧 СОЗДАЁМ ОТВЕТ на транскрипцию пользователя
+                                logger.info(
+                                    "[RESPONSE] Создаём ответ на транскрипцию (session_uuid=%s)",
+                                    self.session_uuid,
+                                )
+                                create_event = {
+                                    "type": "response.create",
+                                    "event_id": f"evt_{uuid.uuid4().hex}",
+                                }
+                                await self.send_event(create_event)
 
                     # ---- ИСХОДЯЩАЯ ТРАНСКРИПЦИЯ (что отвечает бот) ----
                     elif event_type == "response.audio_transcript.done":
@@ -800,6 +827,7 @@ class AudioWebSocketClient:
                                 was_running,
                             )
                             self._active_response_id = None
+                            self._is_bot_speaking = False  # 🔧 Echo protection - бот прерван пользователем
                             self._awaiting_response = False
                         else:
                             logger.info(
