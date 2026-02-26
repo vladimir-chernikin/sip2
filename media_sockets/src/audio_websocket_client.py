@@ -771,6 +771,19 @@ class AudioWebSocketClient:
                                         "Ошибка в user_transcript_callback: %s",
                                         e,
                                     )
+                            # 🔧 КРИТИЧНЫЙ ФИКС: создаём ответ ЗДЕСЬ, когда транскрипция готова!
+                            # create_response: False означает что нужно ВРУЧНУЮ создавать response
+                            if self._speech_started_since_last_commit:
+                                logger.info(
+                                    "[VAD] Создаём ответ на transcript (session_uuid=%s)",
+                                    self.session_uuid,
+                                )
+                                create_event = {
+                                    "type": "response.create",
+                                    "event_id": f"evt_{uuid.uuid4().hex}",
+                                }
+                                await self.send_event(create_event)
+                                self._speech_started_since_last_commit = False
                         else:
                             logger.warning(
                                 "[WHISPER] Пустая транскрипция пользователя! session_uuid=%s, accumulated_text=%s",
